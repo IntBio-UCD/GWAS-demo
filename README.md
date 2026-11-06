@@ -35,4 +35,4 @@ If the screen resolution is not good, `settings > displays`
 
 ## SSH keys
 
-Will need to set up an SSH key for github authentication
+Will need to set up an SSH key for github authentication.  See instructions [here](https://jnmaloof.github.io/BIS180L_web/2026/03/31/1-public-key-private-key/)
