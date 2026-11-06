@@ -32,3 +32,7 @@ If the screen resolution is not good, `settings > displays`
 (Note there are other connection options, including SSH from the terminal, and VS code remote server)
 
 ## REMEMBER TO SHELVE YOUR INSTANCE WHEN YOU ARE NOT USING IT!
+
+## SSH keys
+
+Will need to set up an SSH key for github authentication
