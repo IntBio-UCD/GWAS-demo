@@ -31,8 +31,9 @@ If the screen resolution is not good, `settings > displays`
 
 (Note there are other connection options, including SSH from the terminal, and VS code remote server)
 
-## REMEMBER TO SHELVE YOUR INSTANCE WHEN YOU ARE NOT USING IT!
-
 ## SSH keys
 
 Will need to set up an SSH key for github authentication.  See instructions [here](https://jnmaloof.github.io/BIS180L_web/2026/03/31/1-public-key-private-key/)
+
+## REMEMBER TO SHELVE YOUR INSTANCE WHEN YOU ARE NOT USING IT!
+
