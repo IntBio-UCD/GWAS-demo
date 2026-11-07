@@ -1,0 +1,154 @@
+# Setup SNPs
+
+Script to get SNPs ready for GWAS analysis and create pop structure info.
+
+We want to filter SNPs to retain those that are biallelic, have a minor allele frequency >= 0.05, and are genotyped in at least 70% of individuals. We also want to remove SNPs with a correlation > 0.9.
+
+We will use [PLINK 1.9](https://www.cog-genomics.org/plink/1.9/) for these steps. Because this is a plant genome with non-standard chromosome names, `bcftools` first enumerates and extracts the contigs, and PLINK is run with `--allow-extra-chr`. The chromosome jobs run in parallel. LD pruning uses an r² threshold of 0.81, corresponding to an absolute correlation of 0.9, within sliding windows of 1,000 variants.
+
+The per-chromosome results are written under `filtered_snps` in the same directory as the input BCF. Set `N_JOBS` to control the number of concurrent chromosome jobs.
+
+After creating a filtered SNP list, we use that to creat a kinship matrix and PCAs to use for population structure correction.
+
+Ideally we would use (BEAGLE)[https://faculty.washington.edu/browning/beagle/beagle.html] or something to impute missing SNP genotypes.  That has not been done here.
+
+Note all code in this script is **bash** not R.
+
+```{bash}
+# set -euo pipefail
+
+BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
+OUTDIR="$(dirname "$BCF")/filtered_snps"
+N_JOBS=7
+mkdir -p "$OUTDIR"
+export BCF OUTDIR
+
+# Process each contig separately for speed
+bcftools query -f '%CHROM\n' "$BCF" | sort -u | \
+    xargs -r -P "$N_JOBS" -I '{}' bash -c '
+        set -euo pipefail
+        chr="$1"
+        chr_bcf="$OUTDIR/.${chr}.input.bcf"
+
+        bcftools view -Ob -o "$chr_bcf" -t "$chr" "$BCF"
+
+        # Retain biallelic SNPs with MAF >= 0.05 and call rate >= 70%.
+        plink1.9 --allow-extra-chr --bcf "$chr_bcf" --double-id \
+            --set-missing-var-ids '@:#:$r:$a' \
+            --biallelic-only strict --snps-only just-acgt --maf 0.05 --geno 0.30 \
+            --make-bed --out "$OUTDIR/${chr}.maf_filtered"
+
+        # Identify correlated variants, then retain the pruned set.
+        plink1.9 --allow-extra-chr --bfile "$OUTDIR/${chr}.maf_filtered" \
+            --indep-pairwise 1000 50 0.81 --out "$OUTDIR/${chr}.ld"
+        plink1.9 --allow-extra-chr --bfile "$OUTDIR/${chr}.maf_filtered" \
+            --extract "$OUTDIR/${chr}.ld.prune.in" --make-bed \
+            --out "$OUTDIR/${chr}.final"
+
+        rm "$chr_bcf"
+    ' _ '{}'
+```
+
+Combine the chromosome filesets into one PLINK fileset. The output will be
+`all_chromosomes.bed`, `all_chromosomes.bim`, and `all_chromosomes.fam`.
+
+```{bash}
+#set -euo pipefail
+
+BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
+OUTDIR="$(dirname "$BCF")/filtered_snps"
+MERGED_OUT="$OUTDIR/all_chromosomes"
+
+shopt -s nullglob
+final_beds=("$OUTDIR"/*.final.bed)
+shopt -u nullglob
+if (( ${#final_beds[@]} == 0 )); then
+    echo "No per-chromosome .final.bed files found in $OUTDIR" >&2
+    exit 1
+fi
+
+base_prefix="${final_beds[0]%.bed}"
+if (( ${#final_beds[@]} == 1 )); then
+    plink1.9 --allow-extra-chr --bfile "$base_prefix" \
+        --make-bed --out "$MERGED_OUT"
+else
+    merge_list="$(mktemp "$OUTDIR/.merge-list.XXXXXX")"
+    trap 'rm -f "$merge_list"' EXIT
+    for bed in "${final_beds[@]:1}"; do
+        printf '%s\n' "${bed%.bed}" >> "$merge_list"
+    done
+
+    plink1.9 --allow-extra-chr --bfile "$base_prefix" \
+        --merge-list "$merge_list" --make-bed --out "$MERGED_OUT"
+fi
+```
+Total after filtering: 574352
+
+Take a look at Missingness:
+
+```{bash}
+BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
+OUTDIR="$(dirname "$BCF")/filtered_snps"
+MERGED_OUT="$OUTDIR/all_chromosomes"
+
+plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
+    --missing --out "$OUTDIR/all_chromosomes_missing"
+
+awk '
+NR == 1 {
+    for (i = 1; i <= NF; i++) {
+        if ($i == "F_MISS") miss_col = i
+    }
+    next
+}
+{
+    call_rate = 1 - $miss_col
+    if (call_rate >= 0.50) n50++
+    if (call_rate >= 0.60) n60++
+    if (call_rate >= 0.70) n70++
+    if (call_rate >= 0.80) n80++
+    if (call_rate >= 0.90) n90++
+}
+END {
+    printf "At least 50%% called: %d SNPs\n", n50
+    printf "At least 60%% called: %d SNPs\n", n60
+    printf "At least 70%% called: %d SNPs\n", n70
+    printf "At least 80%% called: %d SNPs\n", n80
+    printf "At least 90%% called: %d SNPs\n", n90
+}' "$OUTDIR/all_chromosomes_missing.lmiss"
+```
+
+At least 50% called: 1584685 SNPs
+At least 60% called: 1472808 SNPs
+At least 70% called: 570522 SNPs
+At least 80% called: 44952 SNPs
+At least 90% called: 1 SNPs
+
+
+
+Calculate a square genetic relationship (kinship) matrix and principal components
+from the merged, LD-pruned SNP set. PLINK writes `all_chromosomes.rel` and
+`all_chromosomes.rel.id` for the relationship matrix, plus eigenvalue and
+eigenvector files for the first 10 principal components.
+
+```{bash}
+set -euo pipefail
+
+BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
+OUTDIR="$(dirname "$BCF")/filtered_snps"
+MERGED_OUT="$OUTDIR/all_chromosomes"
+THREADS=6
+
+plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
+    --threads "$THREADS" --make-rel square \
+    --out "$OUTDIR/all_chromosomes_kinship"
+
+plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
+    --threads "$THREADS" --pca 10 \
+    --out "$OUTDIR/all_chromosomes_pca"
+```
+
+
+
+
+
