@@ -39,11 +39,15 @@ rownames(geno$markers) <- str_remove(rownames(geno$markers), "WL2_.*_.*_")
 
 # impute missing marker data and clean up the snp matrix
 # this probably should be run with the beagle method, but for time consideration, using the "random" method
-# this is memory intensive.
+# this is memory intensive (~ 35GB)
 
 # 2 minutes
 system.time(geno <-  codeMarkers(geno) )
 
+# below ran overnight and did not finish
+# system.time(geno <- codeMarkers(geno, imputeType = "beagle"))
+# saveRDS(geno, here("GWAS-traditional", "data", "geno-beagle.Rds"))
+            
 str(geno)
 ```
 
@@ -295,13 +299,13 @@ summary(gwas.K.pca.bed)
 
 plot(gwas.K.pca.bed, plotType = "qq", ggtitle = "Height--Kinship + PCA Correction")
 
-plot(gwas.K.pca.bed, plotType = "manhattan", ggtitle = "Height--Kinship + PCA Correction"))
+plot(gwas.K.pca.bed, plotType = "manhattan", ggtitle = "Height--Kinship + PCA Correction")
 ```
 
 
 ## get the significant SNPs
 
-```{r, eval=FALSE}
+```{r}
 sigSnps <- gwas.PCA$signSnp[[1]]
 sigSnps
 ```
@@ -317,5 +321,6 @@ In this table, some of the column names should be obvious. Here are some of the 
 
 ## Next steps
 
-* Better imputation
+* Better SNP imputation
+* Limit analysis to crosses only
 * Merge sig. snps with genome annotation info
