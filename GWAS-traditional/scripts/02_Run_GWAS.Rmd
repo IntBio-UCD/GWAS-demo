@@ -37,6 +37,13 @@ geno <- readPLINK(
 # edit names to match format in phenotype data
 rownames(geno$markers) <- str_remove(rownames(geno$markers), "WL2_.*_.*_")
 
+# impute missing marker data and clean up the snp matrix
+# this probably should be run with the beagle method, but for time consideration, using the "random" method
+# this is memory intensive.
+
+# 2 minutes
+system.time(geno <-  codeMarkers(geno) )
+
 str(geno)
 ```
 
@@ -137,41 +144,31 @@ We need to bring the genetic and phenotypic data together into one gData object 
 ```{r}
 # need slight modification to the pheno tibble before combining
 size_2025_06_09_pheno <- size_2025_06_09 %>% 
-  select(genotype = Unique.ID, height.cm, overhd.diam, overhd.perp, herbv.scale, leaf.number)
+  select(genotype = Unique.ID, height.cm, overhd.diam, overhd.perp, herbv.scale, leaf.number) %>%
+  mutate(l2.height.cm = log2(height.cm))
 
 # confirm order
 all(size_2025_06_09_pheno$genotype == rownames(geno$markers))
 
-# also will use bed and PCs as possible covariate, create a tibble for this
-# no names for this one, so check order first
-all(PC_size$Unique.ID == rownames(geno$markers))
+# also will use bed and PCs as possible covariate, create a dataframe for this
+# here, confusingly, the genotype IDs are in the rownames
 
 covar <- PC_size %>%
-  select(bed, PC1:PC10)
+  select(Unique.ID, bed, PC1:PC10) %>%
+  as.data.frame() %>%
+  column_to_rownames("Unique.ID")
+
+all(rownames(covar)== rownames(geno$markers))
+
 
 geno_pheno <- createGData(gData = geno,
                           kin = kinship_matrix,
                           pheno = size_2025_06_09_pheno,
                           covar = covar)
                           
-# here we impute missing marker data and clean up the snp matrix
-# this probably should be run with the beagle method, but for time consideration, using the "random" method
-# this is memory intensive.
-geno_pheno <-  codeMarkers(geno_pheno) 
+
 
 str(geno_pheno)
-```
-
-
-#### recode the genotypes
-
-statgenGWAS needs the genotypes to be numeric, and we also need to remove redundant (identical) SNPs and replace missing values.  Luckily statgen has a function that does all of this for us.
-
-There are various methods to replace missing values.  Overall the process is called "imputing" and at its best imputing uses existing information to make an educated guess about the most likely value.  That process takes a long time and so here we will just put in a random value based on the allele frequency at the SNP with missing info. This will take a minute or so to run.
-
-```{r}
-set.seed(123)
-gData.rice.recode <- gData.rice %>% codeMarkers(verbose = TRUE)
 ```
 
 ### Run the GWAS
@@ -179,8 +176,8 @@ We will compare GWAS run with a few different population structure corrections a
 
 1. No correction
 2. Population PCs as covariate
-3. Population PCs as covariate + bed
-4. Kinship matrix as correction + bed
+3. Kinship matrix as correction
+4. PCs and Kinship as correction
 5. PCs and Kinship as correction + bed
 
 Run the code below, replacing TRAIT with the name of your trait.
@@ -194,24 +191,25 @@ To see what the GWAS looks like with no correction we will give statgenGWAS a ma
 nullmat <- matrix(0, ncol=ncol(kinship_matrix),nrow=nrow(kinship_matrix), dimnames = dimnames(kinship_matrix))
 
 # run the GWAS
-system.time(gwas.noCorrection<- runSingleTraitGwas(gData = geno_pheno,
-                                       traits = "height.cm",
+## 2.5 minutes
+system.time(gwas.noCorrection <- runSingleTraitGwas(gData = geno_pheno,
+                                       traits = "l2.height.cm",
                                        kin = nullmat)
 )
 ```
 
 We can get a quick summary with:
-```{r, eval=FALSE}
+```{r}
 summary(gwas.noCorrection)
 ```
 
 
 We can look at the Q-Q plot with:
-```{r, eval=FALSE}
+```{r}
 plot(gwas.noCorrection, plotType = "qq")
 ```
 And a Manhattan plot with:
-```{r, eval=FALSE}
+```{r}
 plot(gwas.noCorrection, plotType = "manhattan")
 ```
 In the Manhattan plot, each dot is a SNP.  SNPs in red are above the significance threshold. If you see a lot of red, then that means that many, many SNPs were significant.
@@ -220,28 +218,19 @@ In the Manhattan plot, each dot is a SNP.  SNPs in red are above the significanc
 
 Let's see if things improve if we correct for population structure.  One methods is to include the PCs as co-variates in the analysis.  You can this with:
 
-```{r, eval=FALSE}
+```{r}
 # run the GWAS
-gwas.PCA <- runSingleTraitGwas(gData = gData.rice.recode,
-                               traits = "TRAIT",
+system.time(
+gwas.PCA <- runSingleTraitGwas(gData = geno_pheno,
+                               traits = "l2.height.cm",
                                kin = nullmat,
-                               covar = c("PC1", "PC2", "PC3", "PC4") 
-                               
-)
-```
-
-```{r test_PC, echo=FALSE, eval=FALSE}
-# run the GWAS
-gwas.PCA <- runSingleTraitGwas(gData = gData.rice.recode,
-                               traits = "Seed.length",
-                               kin = nullmat,
-                               covar = c("PC1", "PC2", "PC3", "PC4") 
-                               
+                               covar = c("PC1", "PC2", "PC3", "PC4", "PC5")
+            )
 )
 ```
 
 Again, you can summarize and plot with:
-```{r, eval=FALSE}
+```{r}
 summary(gwas.PCA)
 
 plot(gwas.PCA, plotType = "qq")
@@ -251,37 +240,69 @@ plot(gwas.PCA, plotType = "manhattan")
 
 ### Kinship Matrix
 
-An alternative strategy for population structure correction is to use a kinship matrix, which provides the genetic relatedness of each strain to all of the others.
+An alternative strategy for population structure correction is to use a kinship matrix, which provides the genetic relatedness of each plant to all of the others.
 
-```{r, eval=FALSE}
+```{r}
 # run the GWAS
-gwas.K <- runSingleTraitGwas(gData = gData.rice.recode,
-                             traits = "TRAIT",
-                             kin = data.kinship)
+system.time(
+gwas.K <- runSingleTraitGwas(gData = geno_pheno,
+                             traits = "l2.height.cm")
+                             # since we have a kinship matrix in gData that will be used
+)
 ```
 
-```{r test_kin, eval=FALSE, echo=FALSE}
-# run the GWAS
-gwas.K <- runSingleTraitGwas(gData = gData.rice.recode,
-                             traits = "Seed.length",
-                             kin = data.kinship)
-```
-
-```{r, eval=FALSE}
+```{r}
 summary(gwas.K)
 
-plot(gwas.K, plotType = "qq")
+plot(gwas.K, plotType = "qq", ggtitle = "Height--Kinship Correction")
 
-plot(gwas.K, plotType = "manhattan")
+plot(gwas.K, plotType = "manhattan", ggtitle = "Height--Kinship Correction")
+```
+
+### Kinship Matrix + PCA
+
+```{r}
+# run the GWAS
+system.time(
+  gwas.K.pca <- runSingleTraitGwas(gData = geno_pheno,
+                             traits = "l2.height.cm",
+                             covar = c("PC1", "PC2", "PC3", "PC4", "PC5")
+  )
+)
+```
+
+```{r}
+summary(gwas.K.pca)
+
+plot(gwas.K.pca, plotType = "qq", ggtitle = "Height--Kinship + PCA Correction")
+
+plot(gwas.K.pca, plotType = "manhattan", ggtitle = "Height--Kinship + PCA Correction")
+```
+
+### Kinship Matrix + PCA + bed
+```{r}
+# run the GWAS
+system.time(
+  gwas.K.pca.bed <- runSingleTraitGwas(gData = geno_pheno,
+                             traits = "l2.height.cm",
+                             covar = c("bed", "PC1", "PC2", "PC3", "PC4", "PC5")
+  )
+)
+```
+
+```{r}
+summary(gwas.K.pca.bed)
+
+plot(gwas.K.pca.bed, plotType = "qq", ggtitle = "Height--Kinship + PCA Correction")
+
+plot(gwas.K.pca.bed, plotType = "manhattan", ggtitle = "Height--Kinship + PCA Correction"))
 ```
 
 
-**Exercise 4:** Compare the Q-Q and Manhattan plots of the no correction, PCA correction, and kinship matrix runs. Based on the no-correction results, do you think a correction was needed? Did the corrections make a difference?  If so, which one worked better?  How did this effect the number of "significant" SNPs in the Manhattan plot?  (In the Manhattan plot the horizontal line represents the significance threshold.  If you don't see any dots above the line, nothing was).
-
 ## get the significant SNPs
-Let's retrieve the significant SNPs for our trait.  Choose which ever model you think was best, and then extract the SNPs with:
+
 ```{r, eval=FALSE}
-sigSnps <- gwas.K$signSnp[[1]]
+sigSnps <- gwas.PCA$signSnp[[1]]
 sigSnps
 ```
 In this table, some of the column names should be obvious. Here are some of the others:
@@ -293,15 +314,8 @@ In this table, some of the column names should be obvious. Here are some of the 
 * LOD: -log10(P) (which isn't a true LOD score...)
 * propSnpVar: of the total variance in the trait, what proportion is "explained" by this SNP
 
-**Exercise 5:**
 
-A) Sort the significant SNPs to find the most significant ones (smallest pValue).  
-_Hint:_ Think back to tidyverse if you don't remember how to _arrange_ a data frame.
+## Next steps
 
-
-B) Look for genes close to the most significant SNP using the [rice genome browser](http://rice.uga.edu/cgi-bin/gbrowse/rice/).  Pick a significant SNP from your analysis and enter its chromosome and position in the search box.  The browser wants you to enter a start and stop position, so for example, you should enter "Chr3:30449857..30449857" and then choose "show 20kb" from the pulldown menu on the right hand side.  Report the SNP you chose and the three closest genes.  These are candidate genes for determining the phenotype of your trait of interest in the rice population.  Briefly discuss these genes as possible candidates for the GWAS peak.  __Include a Screenshot of the genome browser in your answer__
-
-_Hint: You can take a screenshot on your JetStream instance by clicking on the app-chooser (bottom left, many small tiles) and searching for "screenshot"_
-
-_Hint: You can include an image in your knitted Rmd file with `![](MyImage.jpg)` on its own line, where `MyImage.jpg` is the path to your image._
-
+* Better imputation
+* Merge sig. snps with genome annotation info
