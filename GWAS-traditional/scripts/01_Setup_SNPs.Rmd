@@ -26,7 +26,7 @@ export BCF OUTDIR
 # Process each contig separately for speed
 bcftools query -f '%CHROM\n' "$BCF" | sort -u | \
     xargs -r -P "$N_JOBS" -I '{}' bash -c '
-        set -euo pipefail
+        # set -euo pipefail
         chr="$1"
         chr_bcf="$OUTDIR/.${chr}.input.bcf"
 
@@ -36,28 +36,28 @@ bcftools query -f '%CHROM\n' "$BCF" | sort -u | \
         plink1.9 --allow-extra-chr --bcf "$chr_bcf" --double-id \
             --set-missing-var-ids '@:#:$r:$a' \
             --biallelic-only strict --snps-only just-acgt --maf 0.05 --geno 0.30 \
-            --make-bed --out "$OUTDIR/${chr}.maf_filtered"
+            --make-bed --out "$OUTDIR/WL2_2025_${chr}.maf_filtered"
 
         # Identify correlated variants, then retain the pruned set.
-        plink1.9 --allow-extra-chr --bfile "$OUTDIR/${chr}.maf_filtered" \
-            --indep-pairwise 1000 50 0.81 --out "$OUTDIR/${chr}.ld"
-        plink1.9 --allow-extra-chr --bfile "$OUTDIR/${chr}.maf_filtered" \
-            --extract "$OUTDIR/${chr}.ld.prune.in" --make-bed \
-            --out "$OUTDIR/${chr}.final"
+        plink1.9 --allow-extra-chr --bfile "$OUTDIR/WL2_2025_${chr}.maf_filtered" \
+            --indep-pairwise 1000 50 0.81 --out "$OUTDIR/WL2_2025_${chr}.ld"
+        plink1.9 --allow-extra-chr --bfile "$OUTDIR/WL2_2025_${chr}.maf_filtered" \
+            --extract "$OUTDIR/WL2_2025_${chr}.ld.prune.in" --make-bed \
+            --out "$OUTDIR/WL2_2025_${chr}.final"
 
         rm "$chr_bcf"
     ' _ '{}'
 ```
 
 Combine the chromosome filesets into one PLINK fileset. The output will be
-`all_chromosomes.bed`, `all_chromosomes.bim`, and `all_chromosomes.fam`.
+`WL2_2025_merge_filtered.bed`, `WL2_2025_merge_filtered.bim`, and `WL2_2025_merge_filtered.fam`.
 
 ```{bash}
 #set -euo pipefail
 
 BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
 OUTDIR="$(dirname "$BCF")/filtered_snps"
-MERGED_OUT="$OUTDIR/all_chromosomes"
+MERGED_OUT="$OUTDIR/WL2_2025_merge_filtered"
 
 shopt -s nullglob
 final_beds=("$OUTDIR"/*.final.bed)
@@ -81,6 +81,9 @@ else
     plink1.9 --allow-extra-chr --bfile "$base_prefix" \
         --merge-list "$merge_list" --make-bed --out "$MERGED_OUT"
 fi
+
+# remove single chrome files
+ rm *Chr*
 ```
 Total after filtering: 574352
 
@@ -89,10 +92,10 @@ Take a look at Missingness:
 ```{bash}
 BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
 OUTDIR="$(dirname "$BCF")/filtered_snps"
-MERGED_OUT="$OUTDIR/all_chromosomes"
+MERGED_OUT="$OUTDIR/WL2_2025_merge_filtered"
 
 plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
-    --missing --out "$OUTDIR/all_chromosomes_missing"
+    --missing --out "$OUTDIR/WL2_2025_merge_filtered_missing"
 
 awk '
 NR == 1 {
@@ -115,7 +118,7 @@ END {
     printf "At least 70%% called: %d SNPs\n", n70
     printf "At least 80%% called: %d SNPs\n", n80
     printf "At least 90%% called: %d SNPs\n", n90
-}' "$OUTDIR/all_chromosomes_missing.lmiss"
+}' "$OUTDIR/WL2_2025_merge_filtered_missing.lmiss"
 ```
 
 At least 50% called: 1584685 SNPs
@@ -127,8 +130,8 @@ At least 90% called: 1 SNPs
 
 
 Calculate a square genetic relationship (kinship) matrix and principal components
-from the merged, LD-pruned SNP set. PLINK writes `all_chromosomes.rel` and
-`all_chromosomes.rel.id` for the relationship matrix, plus eigenvalue and
+from the merged, LD-pruned SNP set. PLINK writes `WL2_2025_merge_filtered.rel` and
+`WL2_2025_merge_filtered.id` for the relationship matrix, plus eigenvalue and
 eigenvector files for the first 10 principal components.
 
 ```{bash}
@@ -136,16 +139,16 @@ set -euo pipefail
 
 BCF=/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.bcf
 OUTDIR="$(dirname "$BCF")/filtered_snps"
-MERGED_OUT="$OUTDIR/all_chromosomes"
+MERGED_OUT="$OUTDIR/WL2_2025_merge_filtered"
 THREADS=6
 
 plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
     --threads "$THREADS" --make-rel square \
-    --out "$OUTDIR/all_chromosomes_kinship"
+    --out "$OUTDIR/WL2_2025_merge_filtered_kinship"
 
 plink1.9 --allow-extra-chr --bfile "$MERGED_OUT" \
     --threads "$THREADS" --pca 10 \
-    --out "$OUTDIR/all_chromosomes_pca"
+    --out "$OUTDIR/WL2_2025_merge_filtered_pca"
 ```
 
 
