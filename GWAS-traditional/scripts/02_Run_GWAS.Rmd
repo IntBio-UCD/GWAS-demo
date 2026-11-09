@@ -17,6 +17,7 @@ We will use StatgenGWAS to perform a GWAS
 ```{r, eval=TRUE, message=FALSE}
 library(tidyverse)
 library(statgenGWAS) #needed for GWAS
+library(here)
 ```
 
 ## Load data
@@ -29,7 +30,7 @@ snp_dir <- "/analyzed_data/GWAS_workshop/data/filtered_snps"
 
 ```{r}
 snps <- readPLINK(
-  bed = file.path(snp_dir, "all_chromosomes.bed")
+  bed = file.path(snp_dir, "WL2_2025_merge_filtered.bed")
 )
 # will also read the .bim and .fam files
 
@@ -40,14 +41,19 @@ str(snps)
 
 Kinship
 ```{r}
-kinship_names <- read_tsv(file.path(snp_dir, "all_chromosomes_kinship.rel.id"), col_names = c("rownames", "colnames"))
+kinship_names <- read_tsv(file.path(snp_dir, "WL2_2025_merge_filtered_kinship.rel.id"),
+    col_names = c("rownames", "colnames")) %>% 
+  mutate(across(everything(),  \(x) str_remove(x, "WL2_.*_.*_")) # match phenotype naming format
+)
 
 all(kinship_names$rownames == kinship_names$colnames) # TRUE
 
-kinship_matrix <- read.table(
-    file.path(snp_dir, "all_chromosomes_kinship.rel"),
-    row.names = kinship_names$rownames,
-    col.names = kinship_names$colnames) %>% as.matrix
+kinship_matrix <- read_table(
+    file.path(snp_dir, "WL2_2025_merge_filtered_kinship.rel"),
+    col_names = FALSE) %>% 
+    as.matrix()
+
+dimnames(kinship_matrix) <- list(kinship_names$rownames, kinship_names$colnames)
 
 kinship_matrix[1:5, 1:5]
 ```
@@ -65,8 +71,9 @@ PCs_pct_var <- read_table(
 ```{r}
 PCs <- read_table(
         file = file.path(snp_dir, "WL2_2025_merge_filtered_pca.eigenvec"),
-        col_names = c("ID", "ID1", PCs_pct_var$PC))  %>%
-      select(-ID1) # remove duplicate column of names
+        col_names = c("Unique.ID", "ID1", PCs_pct_var$PC))  %>%
+      select(-ID1) %>% # remove duplicate column of names
+      mutate(Unique.ID = str_remove(Unique.ID, "WL2_.*_.*_")) # match phenotype format
  
     head(PCs)
 ```
@@ -74,7 +81,10 @@ PCs <- read_table(
 ### phenotypes
 
 ```{r}
-height <- read_
+size <- read_csv(here("GWAS-traditional", "data", "WL2_2025_Size-Merged.csv"))
+head(size)
+
+size_2025_06_09 <- size %>% filter(survey_date == "2025-06-09")
 ```
 
 ### PCA and 
