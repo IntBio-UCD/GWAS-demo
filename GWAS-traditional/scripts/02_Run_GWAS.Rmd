@@ -29,12 +29,15 @@ snp_dir <- "/analyzed_data/GWAS_workshop/data/filtered_snps"
 ### SNP data
 
 ```{r}
-snps <- readPLINK(
+geno <- readPLINK(
   bed = file.path(snp_dir, "WL2_2025_merge_filtered.bed")
 )
 # will also read the .bim and .fam files
 
-str(snps)
+# edit names to match format in phenotype data
+rownames(geno$markers) <- str_remove(rownames(geno$markers), "WL2_.*_.*_")
+
+str(geno)
 ```
 
 ### Kinship and PCs
@@ -84,266 +87,76 @@ PCs <- read_table(
 size <- read_csv(here("GWAS-traditional", "data", "WL2_2025_Size-Merged.csv"))
 head(size)
 
-size_2025_06_09 <- size %>% filter(survey_date == "2025-06-09")
+# pick a single date to work on, for now
+size_2025_06_09 <- size %>% 
+  filter(survey_date == "2025-06-09", Unique.ID %in% rownames(geno$markers)) %>%
+  arrange(match(Unique.ID, rownames(geno$markers))) # ensure order matches genotype.
+                                                    # Not sure that this matters but can't hurt...
+
+head(size_2025_06_09)
 ```
 
-### PCA and 
-## Plotting trait data
+### Phenotype & PCA plots
 
-We need to get the population assignments from Admixture in the same data frame as the PCA genotype assignments and the phenotypic data. We can use a couple of the objects saved in the last lab to create what we need.
+Let's explore how the phenotype is distributed among the PC axes
 
-Load data from last lab
-
-```{r, echo=FALSE, eval=TRUE, message=FALSE}
-load("../output/data_from_SNP_lab.Rdata")
+```{r}
+PC_size <- inner_join(size_2025_06_09, PCs, by = "Unique.ID")
+dim(PC_size)
+head(PC_size)
 ```
 
-```{r, eval=FALSE, message=FALSE}
-load("../../assignment_04-username/output/data_from_SNP_lab.Rdata")
-```
-_You will need to change this path to the location of your `data_from_SNP_lab.Rdata` file_ 
-
-
-Join the data together.  We will have one data frame with the PCs, the population assignments, and the phenotypes
-```{r, eval=TRUE, message=FALSE}
-pheno.geno.pca.pop <- left_join(geno.pca.pop, data.pheno, by=c("ID" = "NSFTVID"))
-
-#get rid of spaces in the phenotype names with "make.names()"
-colnames(pheno.geno.pca.pop) <- make.names(colnames(pheno.geno.pca.pop))
-
-head(pheno.geno.pca.pop)
-```
-
-Check the dimensions
-```{r, eval=TRUE, message=FALSE}
-dim(pheno.geno.pca.pop)
-```
-
-One of the defining characteristics of rice is the grain or seed shape (short, medium, or long grain).  Let's examine the distribution of seed length to width ratios.  You will recall we can make a histogram as follows:
-
-```{r Protein_hist, eval=TRUE, message=FALSE}
-library(ggplot2)
-pheno.geno.pca.pop %>%
-  ggplot(aes(x=`Seed.length.width.ratio`)) +
+First a histogram of our trait.
+```{r}
+PC_size %>%
+  ggplot(aes(x = height.cm)) +
   geom_histogram()
 ```
+skewed.  log transform?
 
-It might be interesting to ask if the distributions look similar for different regions.  
-We can easily produce separate histograms for each level of a factor (as you saw in the ggplot tutorial).  As a refresher, first we create a plot object, called `pl`, using the `ggplot()` function.  Then we add additional information to the plot.  the `mapping=aes()` argument tells R about the "aesthetics" of the plot, in other words which variable should be mapped to which aspect of the plot.
-
-```{r Amylose_hist2,results='hide',eval=FALSE}
-pl <- ggplot(data=pheno.geno.pca.pop, aes(x=Seed.length.width.ratio)) #create the basic plot object
-pl <- pl + geom_histogram(binwidth=.5) #tell R that we want a histogram, with binwidth of .5
-pl <- pl + facet_wrap(facets= ~ Region, ncol=3) # a separate plot ("facet") for each region, arranged in 3 columns
-pl <- pl + ggtitle("Seed length width ratio") #add a title
-pl #display the plot
+```{r}
+PC_size %>%
+  ggplot(aes(x = height.cm)) +
+  geom_histogram() +
+  scale_x_log10()
 ```
+much better
 
-We are a little sparse on data for faceted histograms to be a great way to visualize the results.
-
-As you know, an alternative and useful way to display the data is to use a [boxplot](http://en.wikipedia.org/wiki/Box_plot). The horizontal line is the median and the box is the inter-quartile range (25th to 75th percentile).  See the link for more details.
-
-Try re-plotting as a box plot.
-
-```{r boxplot, echo=FALSE, eval=FALSE}
-pheno.geno.pca.pop %>%
-  ggplot(aes(x=Region,y=`Seed.length.width.ratio`)) +
-  geom_boxplot()
+```{r}
+PC_size %>%
+  ggplot(aes(x=PC1, y=PC2, color = log2(height.cm))) +
+    geom_point() +
+    scale_color_viridis_c()
 ```
-
-For the rest of the lab, choose a trait to work on.  I recommend one of `Flowering.time.at.Aberdeen`, `Leaf.pubescence`, `Seed.length`, `Seed.width`, `Brown.rice.seed.length`, `Brown.rice.seed.width`,  `Brown.rice.length.width.ratio`.
-
-**Exercise 1:** What Trait did you choose?
-
-* Plot your chosen trait data using all three of these methods:
-* as a **single histogram** for all of the data
-* as **separate histograms** for each of the 4 population assignments made by Admixture
-* as a **boxplot** separated by population assignments made by Admixture. 
-* Based on these plots do you think that your trait varies by population? 
-* **optional** Try using the "violin" geom.  
-
-*Hint:* you will need to use a different binwidth than I used with Seed.length.width (or don't specify it at all and let R choose the default).
-
-*Hint:* the relevant column name for population is "assignedPop".  
-
-```{r Alu.hist,echo=FALSE,results='hide',eval=FALSE}
-qplot(x=Alu.Tol,data=pheno.geno.pca.pop,geom="histogram")
-pl <- ggplot(data=pheno.geno.pca.pop,aes(x=Alu.Tol)) #create the basic plot object
-pl <- pl + geom_histogram() #tell R that we want a histogram, with binwidth of 3
-pl <- pl + facet_wrap(facets= ~ assignedPop, ncol=3) # a separate plot ("facet") for each region, arranged in 3 columns
-pl <- pl + ggtitle("Aluminum Tolerance") #add a title
-pl #display the plot
-qplot(x=assignedPop,y=Alu.Tol,data=pheno.geno.pca.pop,geom="boxplot")
-qplot(x=assignedPop,y=Alu.Tol,data=pheno.geno.pca.pop,geom="violin")
-```
-
-These plots may make you want to know the mean for your trait. Remember that we can use summarize to get a mean for each group. For example, if our trait of interest was Seed length width ratio. Also we may want to calculate the standard error of the mean. Here I define a function to do that.
-
-```{r summarize,eval=TRUE}
-sem <- function(x, na.rm=TRUE) {
-  if(na.rm) x <- na.omit(x)
-  sd(x)/sqrt(length(x))
-}
-
-pheno.geno.pca.pop %>% group_by(Region) %>% 
-  summarize(mean.seed.lw=mean(Seed.length.width.ratio,na.rm=T),
-            sem.seed.lw=sem(Seed.length.width.ratio)
-  ) %>%
-  arrange(desc(mean.seed.lw))
-```
-
-
-For the seed length width trait, there appear to be differences in the means between regions.  We can ask if these differences are significant by performing an [ANOVA](https://www.statisticshowto.com/probability-and-statistics/hypothesis-testing/anova/). [More info on ANOVA](http://www.biostathandbook.com/onewayanova.html).
-
-
-```{r ANOVA,results='hide',eval=FALSE}
-aov1 <- aov(Seed.length.width.ratio ~ Region,data=pheno.geno.pca.pop) #1-way ANOVA for Seed.length.width.ratio by Region
-summary(aov1)
-```
-
-The very low p-value for Region indicates that Seed length width ratio varies significantly by region.
-
-**Exercise 2:** 
-
-* Obtain the mean of your trait for each of the four Admixture populations.
-* Perform an ANOVA for your trait to test if it varies significantly by Admixture population.  Show your code, the ANOVA output, and provide an interpretation.
-* Discuss: Do your results suggest that populations structure could be a problem for GWAS for this trait?
-
-```{r Ex7a,echo=FALSE,eval=FALSE}
-pheno.geno.pca.pop %>% group_by(assignedPop) %>%
-  summarize(mean.Aluminum_tolerance=mean(`Alu.Tol`,na.rm=T)) %>%
-  arrange(desc(mean.Aluminum_tolerance))
-```
-
-```{r Ex7b, results='hide',eval=FALSE}
-aov2 <- aov(Seed.length.width.ratio ~ assignedPop,data=pheno.geno.pca.pop)
-summary(aov2)
-```
+Some structure associated with trait.
 
 ## GWAS
 
-A Genome Wide Association Study (GWAS) looks for significant associations between allele state at SNPs and phenotypic traits.  It tests each SNP in turn.  
-
-
-### Prepare data
-
-statgenGWAS needs four data frames/tibbles and  optional covariates:
-
-1. Genotype Data, we will call it "**data.geno**", that contains the genotype data at each SNP for each individual or strain. 
-2. Genotype Map, we will call it "**data.map**" that contains information on the location of each SNP (chromosome and bp).  _The SNP order in **data.geno** and **data.map** need to be the same_
-3. A phenotype data frame. We will use the existing **data.pheno** that contains the phenotype information for each individual or line (with minor modifications).
-4. A Kinship matrix or "**data.kinship**" data frame.  This indicates the pairwise genetic relatedness between individuals (statgenGWAS can estimate this matrix for us).
-5. __Optional:__ A Co-variate or "**data.cv**" data frame.  This can be used to indicate population structure, such as what we computed using Admixture or PCA analysis in the previous lab.
-
-#### data.geno
-
-Load genotype data.  This is the same data you used in the last lab.  There is a duplicate column in the data which messes up the nameing, so we remove the extra column and fix the names.
-
-```{r import_geno, results='hide', eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
-Sys.setenv(VROOM_CONNECTION_SIZE="500000") # needed because the lines in this file are _extremely_long.
-
-data.geno <- read_csv("../input/Rice_44K_genotypes.csv.gz", 
-                      na=c("NA","00"))  %>%
-  rename(ID=`...1`, `6_17160794` = `6_17160794...22252`) %>%  # fix names
-  select(-`6_17160794...22253`) # remove duplicate column
-```
-
-```{r import_geno_student, results='hide', eval=FALSE, message=FALSE}
-Sys.setenv(VROOM_CONNECTION_SIZE="500000") # needed because the lines in this file are _extremely_long.
-
-data.geno <- read_csv("../../assignment_04-username/input/Rice_44K_genotypes.csv.gz", ## adjust the path to point to your assignment 4 repo
-                      na=c("NA","00"))  %>%
-  rename(ID=`...1`, `6_17160794` = `6_17160794...22252`) %>% 
-  select(-`6_17160794...22253`)
-```
-_You will need to change this path to the location of your `Rice_44K_genotypes.csv.gz` file_ 
-
-
-statgenGWAS wants the ID info in the rownames. We can do this with:
+We need to bring the genetic and phenotypic data together into one gData object for statgen
 
 ```{r}
-data.geno <- data.geno %>% as.data.frame() %>% column_to_rownames("ID")
-head(data.geno[,1:10])
-```
-(Note, this may take up to a minute to run)
+# need slight modification to the pheno tibble before combining
+size_2025_06_09_pheno <- size_2025_06_09 %>% 
+  select(genotype = Unique.ID, height.cm, overhd.diam, overhd.perp, herbv.scale, leaf.number)
 
-#### data.map
+# confirm order
+all(size_2025_06_09_pheno$genotype == rownames(geno$markers))
 
-For the data.map data frame we need an object that looks like:
+# also will use bed and PCs as possible covariate, create a tibble for this
+# no names for this one, so check order first
+all(PC_size$Unique.ID == rownames(geno$markers))
 
-```{r, echo=FALSE, eval=TRUE, message=FALSE}
-data.map <- data.frame(SNP=colnames(data.geno)) %>%
-  separate(SNP, into=c("chr", "pos"), sep="_", convert = TRUE, remove = FALSE) %>%
-  mutate(chr=as.numeric(str_remove(chr,"X"))) %>%
-  column_to_rownames("SNP")
-head(data.map)
-```
-Where the rownames are the SNP name, and there is a column for chromosome and position.  Remember that the SNP names are simply chromosome and position (SNP 1_13147 is on chromosome 1 at basepair position 13147)
+covar <- PC_size %>%
+  select(bed, PC1:PC10)
 
-**Exercise 3:** Complete the code below to generate a data.map object like the one above.  Note that "chr" and "pos" should be numeric.  
-_Hint:_ Look at help for the `separate` command.  You will need to specify the `into`, `sep`, `convert` and `remove` arguments.
+geno_pheno <- createGData(gData = geno,
+                          kin = kinship_matrix,
+                          pheno = size_2025_06_09_pheno,
+                          covar = covar)
 
-First create the object.  You do not need to modify this block
-```{r, eval=FALSE}
-# This is one of the rare cases where tibbles and data frames are not interchangeable
-# This is because we need to have rownames and tibbles do not allow rownames
-# So be sure to used "data.frame()" rather than "tibble()"
-
-data.map <- data.frame(SNP=colnames(data.geno)) # create the object
-head(data.map) # take a look
+str(geno_pheno)
 ```
 
-Now use separate to create the `chr` and `pos` columns.  You need to modify this block:
-```{r, eval=FALSE}
-data.map <- data.map %>%
-  separate(SNP, <FILL THIS IN> ) %>%
-  column_to_rownames("SNP")
-
-head(data.map) # check to make sure it looks correct
-```
-
-**Note** It is very important that the `pos` column is numeric. Do you remember how to check that the column is numeric and change it if not?
-_Hint:_ Think about the `as.numeric()` fucntion.
-
-
-#### data.pheno
-
-Here we need to make four changes to our `data.pheno` data frame:
-* rename the "NSFTVID" column to "genotype"
-* only keep numeric columns
-* convert from a tibble to a data frame.
-* fix the column names to remove spaces
-
-```{r}
-data.pheno.small <- data.pheno %>%
-  set_names(make.names(colnames(.))) %>% # fixes the names
-  rename(genotype=NSFTVID) %>%
-  select(genotype, where(is.numeric)) %>%
-  as.data.frame()
-
-head(data.pheno.small)
-```
-
-#### data.cv
-
-Here we make a dataframe of possible covariates
-
-```{r}
-data.cv <- geno.pca.pop %>%
-  as.data.frame() %>%
-  column_to_rownames("ID")
-```
-
-
-#### create the gdata object
-
-To run statgenGWAS we bring data.geno, data.map, data.pheno, and data.cv together into a single object gData.rice
-
-```{r, eval=TRUE}
-gData.rice <- createGData(geno=data.geno, map = data.map, pheno = data.pheno.small, covar = data.cv)
-```
-
-**Note** If you ran into an error, is your `pos` column numeric?
 
 #### recode the genotypes
 
@@ -356,22 +169,14 @@ set.seed(123)
 gData.rice.recode <- gData.rice %>% codeMarkers(verbose = TRUE)
 ```
 
-#### data.kinship
-
-A Kinship matrix is one way to adjust for population structure.  Kinship refers to the genetic relatedness between individuals.  For example, if you have siblings your kinship with them is 50%.  Similarly your kinship with each of your parents is 50%.
-
-Since we do not know the pedigree of these rice strains, we can instead determine kinship from the observed genotypic data. The `kinship` function calculates this for us.
-
-```{r}
-data.kinship <- kinship(gData.rice.recode$markers)
-```
-
 ### Run the GWAS
-We will compare GWAS run with a few different population structure corrections and methods
+We will compare GWAS run with a few different population structure corrections and methods.  Also will try including bed as a covariate to correct for bed-to-bed variation
 
 1. No correction
-2. Population PCAs as covariate
-3. Kinship matrix as correction
+2. Population PCs as covariate
+3. Population PCs as covariate + bed
+4. Kinship matrix as correction + bed
+5. PCs and Kinship as correction + bed
 
 Run the code below, replacing TRAIT with the name of your trait.
 
