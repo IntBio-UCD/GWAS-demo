@@ -35,5 +35,12 @@ If the screen resolution is not good, `settings > displays`
 
 Will need to set up an SSH key for github authentication.  See instructions [here](https://jnmaloof.github.io/BIS180L_web/2026/03/31/1-public-key-private-key/)
 
+## Set your git rebase strategy
+If you don't do this you may encounter issues when pulling changes from the remote repository.
+```bash
+git config --global pull.rebase false
+``` 
+
+
 ## REMEMBER TO SHELVE YOUR INSTANCE WHEN YOU ARE NOT USING IT!
 

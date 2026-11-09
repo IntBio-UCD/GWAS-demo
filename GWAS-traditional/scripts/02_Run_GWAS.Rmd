@@ -152,8 +152,12 @@ covar <- PC_size %>%
 geno_pheno <- createGData(gData = geno,
                           kin = kinship_matrix,
                           pheno = size_2025_06_09_pheno,
-                          covar = covar) %>%
-              codeMarkers() 
+                          covar = covar)
+                          
+# here we impute missing marker data and clean up the snp matrix
+# this probably should be run with the beagle method, but for time consideration, using the "random" method
+# this is memory intensive.
+geno_pheno <-  codeMarkers(geno_pheno) 
 
 str(geno_pheno)
 ```
