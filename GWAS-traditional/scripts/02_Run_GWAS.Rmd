@@ -152,7 +152,8 @@ covar <- PC_size %>%
 geno_pheno <- createGData(gData = geno,
                           kin = kinship_matrix,
                           pheno = size_2025_06_09_pheno,
-                          covar = covar)
+                          covar = covar) %>%
+              codeMarkers() 
 
 str(geno_pheno)
 ```
@@ -184,26 +185,15 @@ Run the code below, replacing TRAIT with the name of your trait.
 
 To see what the GWAS looks like with no correction we will give statgenGWAS a matrix filled with zeros.
 
-```{r, eval=FALSE}
+```{r}
 #define our zero matrix
-nullmat <- matrix(0, ncol=413,nrow=413, dimnames = dimnames(data.kinship))
+nullmat <- matrix(0, ncol=ncol(kinship_matrix),nrow=nrow(kinship_matrix), dimnames = dimnames(kinship_matrix))
 
 # run the GWAS
-gwas.noCorrection<- runSingleTraitGwas(gData = gData.rice.recode,
-                                       traits = "TRAIT",
+system.time(gwas.noCorrection<- runSingleTraitGwas(gData = geno_pheno,
+                                       traits = "height.cm",
                                        kin = nullmat)
-
-```
-
-```{r test_no_correction, eval=FALSE, echo=FALSE}
-#define our zero matrix
-nullmat <- matrix(0, ncol=413,nrow=413, dimnames = dimnames(data.kinship))
-
-# run the GWAS
-gwas.noCorrection<- runSingleTraitGwas(gData = gData.rice.recode,
-                                       traits = "Seed.length",
-                                       kin = nullmat)
-
+)
 ```
 
 We can get a quick summary with:
