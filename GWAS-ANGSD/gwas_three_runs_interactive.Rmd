@@ -1,0 +1,154 @@
+---
+title: "GWAS with low-pass data: three ways to handle structure"
+output: html_document
+---
+
+```{r knitr-options, include = FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.height = 4)
+```
+
+Run the chunks in order. Set your paths and trait in the next chunk, run it, then run everything below it.
+
+```{r settings}
+WORKDIR     <- "."
+ANGSD       <- "~/angsd/angsd"
+BEAGLE      <- "WL2_2025_Stor_combined.beagle.gz"
+FAI         <- "YO_2_1.fa.fai"
+PCANGSD_COV <- "pcangsd_result/WL2_2025.cov"      # plant x plant covariance from PCAngsd
+PHENO       <- "gwas/height.txt"                  # one value per plant, beagle order, -999 = missing
+TRAIT       <- "height"
+OUTDIR      <- "gwas"
+N_PC        <- 10
+THREADS     <- 7
+CHROMS      <- NULL                               # NULL = all chromosomes in the results
+RUN_ANGSD   <- FALSE                              # TRUE to run ANGSD, FALSE to only print the commands
+
+source("gwas_helpers.R")
+setwd(WORKDIR)
+dir.create(OUTDIR, showWarnings = FALSE, recursive = TRUE)
+```
+
+# Three runs
+
+We test one trait at every SNP with the ANGSD latent genotype model. The three runs differ only in how they treat population structure.
+
+1. No correction.
+2. The top PCs as covariates.
+3. The PCs as covariates, and the trait replaced by its residual from a mixed model with the PCAngsd relatedness matrix (rrBLUP).
+
+Run 2 stays inflated on our data (lambda about 2), which is why run 3 is there. A stronger correction can also remove real signal, so we look at the QQ and Manhattan plots for all three.
+
+# Inputs
+
+The phenotype and the covariance matrix must list plants in the same order as the beagle file. The check below only compares counts, so also compare IDs yourself.
+
+```{r inputs}
+y <- as.numeric(readLines(PHENO))
+y[y == -999] <- NA
+
+C   <- unname(as.matrix(read.table(PCANGSD_COV)))
+eig <- eigen(C, symmetric = TRUE)
+
+n_beagle <- (length(strsplit(readLines(gzfile(BEAGLE), n = 1), "\t")[[1]]) - 3) / 3
+stopifnot(length(y) == nrow(C), length(y) == n_beagle)
+c(plants = length(y), with_phenotype = sum(!is.na(y)))
+```
+
+We rank-transform the trait to a normal distribution so a few extreme plants cannot drive a hit. PCs are scaled to mean 0 and sd 1.
+
+```{r prepare}
+ok <- !is.na(y)
+y_int     <- rep(NA_real_, length(y))
+y_int[ok] <- qnorm((rank(y[ok]) - 0.5) / sum(ok))
+
+pcs <- scale(eig$vectors[, 1:N_PC])
+
+write_pheno <- function(x, file) writeLines(ifelse(is.na(x), "-999", sprintf("%.6f", x)), file)
+write_pheno(y_int, file.path(OUTDIR, paste0(TRAIT, "_int.txt")))
+write.table(round(pcs, 6), file.path(OUTDIR, paste0("pcs", N_PC, ".txt")), row.names = FALSE, col.names = FALSE)
+
+hist(y, breaks = 30, main = TRAIT, xlab = TRAIT)
+```
+
+# rrBLUP residual
+
+The model is y = Xb + u + e. X is an intercept plus the PCs, u is a random effect with covariance Vu * K, where K is the PCAngsd matrix, and e is noise with variance Ve. We keep e as the new phenotype. A small value on the diagonal of K keeps it invertible.
+
+```{r rrblup}
+X <- cbind(1, pcs)[ok, ]
+K <- C[ok, ok] + diag(1e-6, sum(ok))
+
+fit <- rrBLUP::mixed.solve(y_int[ok], X = X, K = K)
+res <- y_int[ok] - as.numeric(X %*% as.numeric(fit$beta)) - as.numeric(fit$u)
+stopifnot(all(is.finite(res)))
+
+y_resid     <- rep(NA_real_, length(y))
+y_resid[ok] <- as.numeric(scale(res))
+write_pheno(y_resid, file.path(OUTDIR, paste0(TRAIT, "_rrblup_resid.txt")))
+
+c(Vu = fit$Vu, Ve = fit$Ve, share_relatedness = fit$Vu / (fit$Vu + fit$Ve))
+```
+
+`share_relatedness` is the part of the trait variance that follows relatedness after the PCs. Run 3 cannot map that part. The PC covariates stay in run 3 so the main ancestry axes are removed from the genotype side too.
+
+# ANGSD
+
+`-doAsso 4` is the latent genotype model. `-minHigh` and `-minCount` drop sites with too few informative plants or too few minor alleles. With `RUN_ANGSD <- FALSE` this only prints the three commands.
+
+```{r angsd}
+pheno_int <- file.path(OUTDIR, paste0(TRAIT, "_int.txt"))
+pheno_res <- file.path(OUTDIR, paste0(TRAIT, "_rrblup_resid.txt"))
+pc_file   <- file.path(OUTDIR, paste0("pcs", N_PC, ".txt"))
+
+out <- c(`No correction` = file.path(OUTDIR, paste0(TRAIT, "_run1_nocov")),
+         `PCs`          = file.path(OUTDIR, paste0(TRAIT, "_run2_pcs")),
+         `rrBLUP`       = file.path(OUTDIR, paste0(TRAIT, "_run3_rrblup")))
+
+asso <- function(pheno, out, cov = "") {
+  paste(ANGSD, "-doMaf 4 -beagle", BEAGLE, "-fai", FAI, "-yQuant", pheno, cov,
+        "-doAsso 4 -minHigh 10 -minCount 10 -P", THREADS, "-out", out)
+}
+
+cat(asso(pheno_int, out[1]),
+    asso(pheno_int, out[2], paste("-cov", pc_file)),
+    asso(pheno_res, out[3], paste("-cov", pc_file)),
+    sep = "\n\n")
+
+files <- paste0(out, ".lrt0.gz")
+names(files) <- names(out)
+```
+
+# Results
+
+```{r read}
+stopifnot("Result files missing. Set RUN_ANGSD <- TRUE, run the settings chunk, then the ANGSD chunk." = all(file.exists(files)))
+runs   <- map(files, read_lrt)
+chroms <- if (is.null(CHROMS)) unique(runs[[1]]$chr) else CHROMS
+lay    <- chr_layout(FAI, chroms)
+
+tibble(run = names(runs), sites = map_int(runs, nrow), lambda = round(map_dbl(runs, lambda_gc), 2),
+       threshold = round(bonferroni(sites), 2), sites_above = map_int(runs, ~ sum(.x$logp >= bonferroni(nrow(.x)))))
+```
+
+Lambda is the median test statistic divided by its value under no association. 1 means calibrated. `sites_above` counts sites past the Bonferroni line.
+
+```{r qq, fig.width = 5, fig.height = 5}
+iwalk(runs, function(d, nm) {
+  p <- plot_qq(runs[nm]) +
+    ggtitle(sprintf("%s: lambda = %.2f", nm, lambda_gc(d))) +
+    theme(legend.position = "none")
+  ggsave(file.path(OUTDIR, paste0(TRAIT, "_qq_", gsub(" ", "_", nm), ".png")), p, width = 5, height = 5, dpi = 300)
+  print(p)
+})
+```
+
+A calibrated run follows the diagonal and lifts off only at the far right. A run that lifts off early is inflated everywhere.
+
+```{r manhattan, fig.width = 10, fig.height = 4}
+iwalk(runs, function(d, nm) {
+  p <- plot_manhattan(d, lay, title = nm)
+  ggsave(file.path(OUTDIR, paste0(TRAIT, "_manhattan_", gsub(" ", "_", nm), ".png")), p, width = 10, height = 4, dpi = 300)
+  print(p)
+})
+```
+The red line is Bonferroni at 5%. A peak that holds in all three runs does not depend on how structure was handled. A peak that is only in run 1 is ancestry. A peak that is in run 2 and gone in run 3 could be fine-scale structure, or real signal absorbed by the mixed model. Check how much of the trait the PCs and relatedness explain before deciding which.
