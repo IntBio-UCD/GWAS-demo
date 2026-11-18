@@ -8,14 +8,15 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE, fig.width = 8, fig.heigh
 ```
 
 Run the chunks in order. Set your paths and trait in the next chunk, run it, then run everything below it.
+Add the upstream commands for ANGSD and PCangsd codes in here.
 
 ```{r settings}
-WORKDIR     <- "" # Set this to your working directory, and ideally put the full path
+WORKDIR     <- "/analyzed_data/Rishav/GWAS-demo/GWAS-ANGSD" # Set this to your working directory, and ideally put the full path
 ANGSD       <- "/analyzed_data/GWAS_workshop/angsd/angsd"
 BEAGLE      <- "/analyzed_data/GWAS_workshop/data/WL2_2025_Stor_combined.beagle.gz"
 FAI         <- "/analyzed_data/GWAS_workshop/data/YO_2_1.fa.fai"
 PCANGSD_COV <- "./data/WL2_2025.cov"      # plant x plant covariance from PCAngsd
-PHENO       <- "data/height.txt"                  # one value per plant, beagle order, -999 = missing
+PHENO       <- "./data/height.txt"                  # one value per plant, beagle order, -999 = missing
 TRAIT       <- "height"
 OUTDIR      <- "gwas"
 N_PC        <- 10
